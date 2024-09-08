@@ -12,6 +12,7 @@ using System.IO.Ports;
 using System.Collections;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Globalization;
 
 namespace InvTransService
 {
@@ -41,17 +42,26 @@ namespace InvTransService
 
 
             //    OpeningPort();
-            //    _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 15, 55, 0); // Set target time to 2:00 PM
-            //    _timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
+           
             //    InitializeThreads();
         }
 
         protected override void OnStart(string[] args)
         {
-            eventLog1.WriteEntry("MySimpleService started yessssssssssssssssssssssssssssssssssssssssss.");
-            eventLog1.WriteEntry("Salam");
-            OpeningPort();
-            eventLog1.WriteEntry("the port is opened.");
+          //  System.Diagnostics.Debugger.Launch();
+            eventLog1.WriteEntry("MySimpleService started now.");
+            _serialPort = new SerialPort("COM3"); // Replace with your COM port
+            _serialPort.BaudRate = 9600;
+            _serialPort.Parity = Parity.None;
+            _serialPort.StopBits = StopBits.One;
+            _serialPort.DataBits = 8;
+            _serialPort.DataReceived += new SerialDataReceivedEventHandler(SerialPort_DataReceived);
+            InitializeThreads();
+            _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 16,51, 0); // Set target time to 2:00 PM
+            _timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
+         
+
+
             //    RunThread.Start();
         }
 
@@ -59,102 +69,205 @@ namespace InvTransService
         {
             eventLog1.WriteEntry("MySimpleService stopped.");
         }
+        private void CheckTime(object state)
+        {
+            if (DateTime.Now >= _targetTime && DateTime.Now < _targetTime.AddMinutes(1))
+            {
+                OpeningPort();
+                eventLog1.WriteEntry("timer Click");
+                RunTheProc();
+            }
+
+        }
+        private void RunTheProc()
+        {
+            RunThread.Start();
+            ReadThread.Start();
+            
+        }
+        private void InitializeThreads()
+        {
+            // Initialize and start the COM port listening thread
+            ReadThread = new Thread(ListenToComPort);
+            ReadThread.IsBackground = true;
+            
+
+            // Initialize and start the Run thread
+            RunThread = new Thread(RunningMethod);
+            RunThread.IsBackground = true;
+           
 
 
+
+            //Initialize and start the parsing thraed
+            ParseThread = new Thread(ParsingMethod);
+            ParseThread.IsBackground = true;
+            
+        }
+        public static string ConvertGregorianToSolar(DateTime gregorianDate)
+        {
+            PersianCalendar persianCalendar = new PersianCalendar();
+            int year = persianCalendar.GetYear(gregorianDate);
+            int month = persianCalendar.GetMonth(gregorianDate);
+            int day = persianCalendar.GetDayOfMonth(gregorianDate);
+
+            return $"{year}-{month:D2}-{day:D2}";
+        }
         private void OpeningPort()
         {
-            eventLog1.WriteEntry("command 1");
-            _serialPort = new SerialPort("COM3"); // Replace with your COM port
-            eventLog1.WriteEntry("command 2");
-            _serialPort.BaudRate = 9600;
-            eventLog1.WriteEntry("command 3");
-            _serialPort.Parity = Parity.None;
-            eventLog1.WriteEntry("command 4");
-            _serialPort.StopBits = StopBits.One;
-            eventLog1.WriteEntry("command 5");
-            _serialPort.DataBits = 8;
-            eventLog1.WriteEntry("command 6");
-            _serialPort.DataReceived += new SerialDataReceivedEventHandler(SerialPort_DataReceived);
-            eventLog1.WriteEntry("command 7");
+            
+           try
+           {
+                _serialPort.Open();
+           }
+           catch (Exception e)
+           {
+           }
+            
+        }
+
+        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
+        {
+            string data = _serialPort.ReadExisting();
+            Buffer += data;
+        }
+
+        private void SendingMessage()
+        {
+            ReadSms();
+            string QuestionEnergyLowWord = "MB30119=?";
+            string QuestionEnergyHighWord = "MB30120=?";
+            string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
+            string GetSimNumQuery = "SELECT SimNum FROM DeviceInfoTable";
+            List<string> columnData = new List<string>();
+            using (SQLiteConnection connection = new SQLiteConnection(connectionString))
+            {
+                SQLiteCommand command = new SQLiteCommand(GetSimNumQuery, connection);
+                connection.Open();
+                using (SQLiteDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        columnData.Add(reader["SimNum"].ToString());
+                    }
+                }
+            }
+            string[] ListOfNumbers = columnData.ToArray();
+            //opening the port for sending message
+            
+            //initializing the sms procedure
+
+            _serialPort.WriteLine("AT+CMGF=1\r"); // Set SMS text mode
+            Thread.Sleep(400);
+            _serialPort.WriteLine("AT+CSCS=\"GSM\"" + '\r');
+            Thread.Sleep(400);
+            //sending batch messages
+            Thread.Sleep(2000);
+            ParseThread.Start();
+            eventLog1.WriteEntry("parsing thread start and sending message begin");
+            foreach (var item in ListOfNumbers)
+            {
+                if (_serialPort.IsOpen)
+                {
+                    _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
+                    Thread.Sleep(400);
+                    _serialPort.WriteLine(QuestionEnergyHighWord + (char)26 + '\r');
+                    Thread.Sleep(400);
+                }
+                else
+                {
+                    try
+                    {
+                        _serialPort.Open();
+                    }
+                    catch (Exception e)
+                    {
+                        eventLog1.WriteEntry("this happened "+ e);
+                    }
+                }
+                Thread.Sleep(5000);
+            }
+            Thread.Sleep(2000);
+            foreach (var item in ListOfNumbers)
+            {
+                if (_serialPort.IsOpen)
+                {
+                    Thread.Sleep(400);
+                    _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
+                    Thread.Sleep(300);
+                    _serialPort.WriteLine(QuestionEnergyLowWord + (char)26 + '\r');
+                    Thread.Sleep(300);
+
+                }
+                else
+                {
+                    try
+                    {
+                        _serialPort.Open();
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+                Thread.Sleep(5000);
+
+            }
+            eventLog1.WriteEntry("sending message ended");
+        }
+
+        private void ReadSms()
+        {
             try
             {
-                eventLog1.WriteEntry("command 8");
-                _serialPort.Open();
-                eventLog1.WriteEntry("command 9");
+                _serialPort.WriteLine("AT+CMGD=0,4\r"); // delete pre sms
+                Thread.Sleep(400);
+                _serialPort.WriteLine("AT+CMGF=1\r"); // Set SMS text mode
+                Thread.Sleep(400);
+
+                _serialPort.WriteLine("AT+CPMS=\"SM\"\r"); // Select SIM storage
+                Thread.Sleep(400);
+
+                _serialPort.WriteLine("AT+CNMI=2,2,0,0,0\r");
+                Thread.Sleep(400);
+
+                // Read a specific message (example: message at index 1)
+                // _serialPort.WriteLine("AT+CMGR=1\r");
+                Thread.Sleep(500);
             }
             catch (Exception e)
             {
-                eventLog1.WriteEntry("this happend:" + e );
+                eventLog1.WriteEntry("this is happendddd : "+ e);
             }
-            eventLog1.WriteEntry("command 10");
+
         }
-        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
+
+        private void ParsingMethod()
         {
-            eventLog1.WriteEntry("command 11");
-            string data = _serialPort.ReadExisting();
-            eventLog1.WriteEntry("command 12");
-            Buffer += data;
-            eventLog1.WriteEntry("command 13");
+            eventLog1.WriteEntry("parsing method start waiting");
+            int WaitTime = 120000;
+            string[,] DataInDB;
+            Thread.Sleep(WaitTime);
+            eventLog1.WriteEntry("parsing method start Working");
+            string[] Messages = ExtractCMTMessages(Buffer);
+            DataInDB = CreateArray(Messages);
+            
+
+            InsertInDataBase(DataInDB);
+
+            while (true)
+            {
+                // Keep the threading alive
+                Thread.Sleep(200);
+            }
+
         }
-
-        /* major app
-         private void CheckTime(object state)
+       
+        private void ChekingError(string[,] DataInDB, int[] TodayEnergy)
          {
-             if (DateTime.Now >= _targetTime && DateTime.Now < _targetTime.AddMinutes(1))
-             {
-                 OpeningPort();
-                 RunThread.Start();
-             }
-
-         }
-        
-         private void InitializeThreads()
-         {
-             // Initialize and start the COM port listening thread
-             ReadThread = new Thread(ListenToComPort);
-             ReadThread.IsBackground = true;
-             ReadThread.Start();
-
-             // Initialize and start the Run thread
-             RunThread = new Thread(RunningMethod);
-             RunThread.IsBackground = true;
-
-
-
-
-             //Initialize and start the parsing thraed
-             ParseThread = new Thread(ParsingMethod);
-             ParseThread.IsBackground = true;
-             //  ParseThread.Start();
-         }
-         private void ParsingMethod()
-         {
-             int WaitTime = 60000;
-             string[,] DataInDB;
-             Thread.Sleep(WaitTime);
-             string[] Messages = ExtractCMTMessages(Buffer);
-             DataInDB = CreateArray(Messages);
-
-             InsertInDataBase(DataInDB);
-
-             while (true)
-             {
-                 // Keep the threading alive
-                 Thread.Sleep(200);
-             }
-
-         }
-         private void ChekingError(string[,] DataInDB, int[] TodayEnergy)
-         {
-
-
-
              string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
-
              string GetSimNumQuery = "SELECT SimNum , SID FROM DeviceInfoTable";
              List<string> AllSimList = new List<string>();
              List<string> SidList = new List<string>();
-
              List<string> ResSimList = new List<string>();
              using (SQLiteConnection connection = new SQLiteConnection(connectionString))
              {
@@ -216,8 +329,9 @@ namespace InvTransService
                  connection.Open();
                  string InsStatusQuery;
                  DateTime currentDate = DateTime.Today;
-                 string today = currentDate.ToString("yyyy-MM-dd");
-                 for (int i = 0; i < StatArr.GetLength(0); i++)
+                 string today = ConvertGregorianToSolar(currentDate);
+                //  string today = currentDate.ToString("yyyy-MM-dd");
+                for (int i = 0; i < StatArr.GetLength(0); i++)
                  {
                      if (StatArr[i, 2] == "OK")
                      {
@@ -259,7 +373,8 @@ namespace InvTransService
              }
 
          }
-         private void InsertInDataBase(string[,] DataInDB)
+
+        private void InsertInDataBase(string[,] DataInDB)
          {
 
              int[] YesterdayEnergy = new int[DataInDB.GetLength(0)];
@@ -281,7 +396,7 @@ namespace InvTransService
 
                      // Insert data from TextBox
                      DateTime currentDate = DateTime.Today;
-                     string today = currentDate.ToString("yyyy-MM-dd");
+                     string today = ConvertGregorianToSolar( currentDate);
 
                      for (int i = 0; i < DataInDB.GetLength(0); i++)
                      {
@@ -317,10 +432,10 @@ namespace InvTransService
                          createTable2Cmd.ExecuteNonQuery();
                      }
 
-                     // Insert data from TextBox
+                     
                      currentDate = DateTime.Today;
-                     today = currentDate.ToString("yyyy-MM-dd");
-                     string yesterday = (currentDate.AddDays(-1)).ToString("yyyy-MM-dd");
+                     today = ConvertGregorianToSolar(currentDate);
+                    string yesterday = ConvertGregorianToSolar(currentDate.AddDays(-1));
 
                      for (int i = 0; i < DataInDB.GetLength(0); i++)
                      {
@@ -343,7 +458,7 @@ namespace InvTransService
                      for (int i = 0; i < DataInDB.GetLength(0); i++)
                      {
                          TodayEnergy[i] = Convert.ToInt32(DataInDB[i, 1]) - YesterdayEnergy[i];
-                         if (DataInDB[i, 1] != "-1")
+                         if (DataInDB[i, 1] == "-1")
                          {
                              TodayEnergy[i] = -1;
                          }
@@ -382,18 +497,11 @@ namespace InvTransService
                  }
              }
 
-
              ChekingError(DataInDB, TodayEnergy);
-             RunThread.Abort();
-             ReadThread.Abort();
-             ParseThread.Abort();
-             RunThread.Join();
-             ReadThread.Join();
-             ParseThread.Join();
+             
+        }
 
-
-         }
-         private string[,] CreateArray(string[] Messages)
+        private string[,] CreateArray(string[] Messages)
          {
              string[,] resultArray = new string[Messages.Length, 2];
 
@@ -448,7 +556,8 @@ namespace InvTransService
 
              for (int i = 0; i < sims; i++)
              {
-                 try
+               
+                try
                  {
                      int energy = (int.Parse(finalArray[i, 2]) << 16) + int.Parse(finalArray[i, 1]);
                      finalArray[i, 3] = energy.ToString();
@@ -458,7 +567,7 @@ namespace InvTransService
                      int energy = -1;
                      finalArray[i, 3] = energy.ToString();
                  }
-
+                 
              }
              for (int i = 0; i < sims; i++)
              {
@@ -468,7 +577,8 @@ namespace InvTransService
 
              return returnArray;
          }
-         public static string[] ExtractCMTMessages(string input)
+
+        public static string[] ExtractCMTMessages(string input)
          {
              List<string> messages = new List<string>();
              string[] lines = input.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
@@ -485,8 +595,9 @@ namespace InvTransService
 
              return messages.ToArray();
          }
-         private void ListenToComPort()
-         {
+
+        private void ListenToComPort()
+        {
              _serialPort.DataReceived += SerialPort_DataReceived;
 
              while (true)
@@ -494,34 +605,8 @@ namespace InvTransService
                  // Keep the thread alive
                  Thread.Sleep(200);
              }
-         }
-         
-         private void ReadSms()
-         {
-
-             try
-             {
-                 _serialPort.WriteLine("AT+CMGD=0,4\r"); // delete pre sms
-                 Thread.Sleep(400);
-
-                 _serialPort.WriteLine("AT+CMGF=1\r"); // Set SMS text mode
-                 Thread.Sleep(400);
-
-                 _serialPort.WriteLine("AT+CPMS=\"SM\"\r"); // Select SIM storage
-                 Thread.Sleep(400);
-
-                 _serialPort.WriteLine("AT+CNMI=2,2,0,0,0\r");
-                 Thread.Sleep(400);
-
-                 // Read a specific message (example: message at index 1)
-                 // _serialPort.WriteLine("AT+CMGR=1\r");
-                 Thread.Sleep(500);
-             }
-             catch (Exception )
-             {
-             }
-
-         }
+        }
+        
          public void RunningMethod()
          {
              try
@@ -543,110 +628,7 @@ namespace InvTransService
              }
 
          }
-         private void SendingMessage()
-         {
-             string QuestionEnergyLowWord = "MB30119=?";
-             string QuestionEnergyHighWord = "MB30120=?";
-             ReadSms();
-             string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
-             string GetSimNumQuery = "SELECT SimNum FROM DeviceInfoTable";
-             List<string> columnData = new List<string>();
-
-             using (SQLiteConnection connection = new SQLiteConnection(connectionString))
-             {
-                 SQLiteCommand command = new SQLiteCommand(GetSimNumQuery, connection);
-                 connection.Open();
-
-                 using (SQLiteDataReader reader = command.ExecuteReader())
-                 {
-                     while (reader.Read())
-                     {
-                         columnData.Add(reader["SimNum"].ToString());
-                     }
-                 }
-             }
-
-             string[] ListOfNumbers = columnData.ToArray();
-
-             //opening the port for sending message
-             if (!_serialPort.IsOpen)
-             {
-                 _serialPort.PortName = "COM3";
-                 _serialPort.BaudRate = 9600;
-                 _serialPort.Parity = Parity.None;
-                 _serialPort.DataBits = 8;
-                 _serialPort.StopBits = StopBits.One;
-                 try
-                 {
-                     _serialPort.Open();
-                 }
-                 catch (Exception )
-                 {
-                 }
-             }
-
-             //initializing the sms procedure
-
-             _serialPort.WriteLine("AT+CMGF=1\r"); // Set SMS text mode
-             Thread.Sleep(400);
-             _serialPort.WriteLine("AT+CSCS=\"GSM\"" + '\r');
-             Thread.Sleep(400);
-
-             //sending batch messages
-             Thread.Sleep(2000);
-             ParseThread.Start();
-             foreach (var item in ListOfNumbers)
-             {
-                 if (_serialPort.IsOpen)
-                 {
-                     _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
-                     Thread.Sleep(400);
-                     _serialPort.WriteLine(QuestionEnergyHighWord + (char)26 + '\r');
-                     Thread.Sleep(400);
-
-                 }
-                 else
-                 {
-                     try
-                     {
-                         _serialPort.Open();
-                     }
-                     catch (Exception )
-                     {
-                     }
-                 }
-                 Thread.Sleep(5000);
-
-             }
-             Thread.Sleep(2000);
-             foreach (var item in ListOfNumbers)
-             {
-                 if (_serialPort.IsOpen)
-                 {
-                     Thread.Sleep(400);
-                     _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
-                     Thread.Sleep(300);
-                     _serialPort.WriteLine(QuestionEnergyLowWord + (char)26 + '\r');
-                     Thread.Sleep(300);
-
-                 }
-                 else
-                 {
-                     try
-                     {
-                         _serialPort.Open();
-                     }
-                     catch (Exception )
-                     {
-                     }
-                 }
-                 Thread.Sleep(5000);
-
-             }
-             RunThread.Abort();
-             RunThread.Join();
-
-         }*/
+         
 
     }
 }
