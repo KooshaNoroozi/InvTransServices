@@ -19,6 +19,7 @@ namespace InvTransService
     public partial class InvTransService : ServiceBase
     {
         private System.Threading.Timer _timer;
+        private System.Threading.Timer _timer2;
         private DateTime _targetTime;
         private Thread ReadThread;
         private Thread RunThread;
@@ -41,14 +42,12 @@ namespace InvTransService
 
 
 
-            //    OpeningPort();
-           
-            //    InitializeThreads();
+            
         }
 
         protected override void OnStart(string[] args)
         {
-          //  System.Diagnostics.Debugger.Launch();
+            System.Diagnostics.Debugger.Launch();
             eventLog1.WriteEntry("MySimpleService started now.");
             _serialPort = new SerialPort("COM3"); // Replace with your COM port
             _serialPort.BaudRate = 9600;
@@ -56,18 +55,31 @@ namespace InvTransService
             _serialPort.StopBits = StopBits.One;
             _serialPort.DataBits = 8;
             _serialPort.DataReceived += new SerialDataReceivedEventHandler(SerialPort_DataReceived);
-            InitializeThreads();
-            _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 16,51, 0); // Set target time to 2:00 PM
+            _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 14, 27, 0); // Set target time to 2:00 PM
             _timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
-         
+          //  _timer2 = new System.Threading.Timer(CheckTime2, null, 0, 300000);
 
 
-            //    RunThread.Start();
+            
         }
 
         protected override void OnStop()
         {
             eventLog1.WriteEntry("MySimpleService stopped.");
+            if (RunThread != null && RunThread.IsAlive)
+                RunThread.Abort();
+            if (ReadThread != null && ReadThread.IsAlive)
+                ReadThread.Abort();
+            if (ParseThread != null && ParseThread.IsAlive)
+                ParseThread.Abort();
+        }
+        private void CheckTime2(object state)
+        {
+            Buffer = null;
+            OpeningPort();
+            eventLog1.WriteEntry("timer Click");
+            RunInitializeThreads();
+            ReadInitializeThreads();
         }
         private void CheckTime(object state)
         {
@@ -75,34 +87,36 @@ namespace InvTransService
             {
                 OpeningPort();
                 eventLog1.WriteEntry("timer Click");
-                RunTheProc();
+                RunInitializeThreads();
+                ReadInitializeThreads();
             }
 
         }
-        private void RunTheProc()
+
+       
+        private void RunInitializeThreads()
         {
+           
+            // Initialize and start the Run thread
+            RunThread = new Thread(RunningMethod);
+            RunThread.IsBackground = true;
             RunThread.Start();
-            ReadThread.Start();
-            
         }
-        private void InitializeThreads()
+
+        private void ReadInitializeThreads()
         {
             // Initialize and start the COM port listening thread
             ReadThread = new Thread(ListenToComPort);
             ReadThread.IsBackground = true;
-            
+            ReadThread.Start();
 
-            // Initialize and start the Run thread
-            RunThread = new Thread(RunningMethod);
-            RunThread.IsBackground = true;
-           
-
-
-
+        }
+        private void ParsInitializeThreads()
+        {
             //Initialize and start the parsing thraed
             ParseThread = new Thread(ParsingMethod);
             ParseThread.IsBackground = true;
-            
+            ParseThread.Start();
         }
         public static string ConvertGregorianToSolar(DateTime gregorianDate)
         {
@@ -113,6 +127,7 @@ namespace InvTransService
 
             return $"{year}-{month:D2}-{day:D2}";
         }
+
         private void OpeningPort()
         {
             
@@ -134,7 +149,7 @@ namespace InvTransService
 
         private void SendingMessage()
         {
-            ReadSms();
+            
             string QuestionEnergyLowWord = "MB30119=?";
             string QuestionEnergyHighWord = "MB30120=?";
             string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
@@ -163,7 +178,7 @@ namespace InvTransService
             Thread.Sleep(400);
             //sending batch messages
             Thread.Sleep(2000);
-            ParseThread.Start();
+            ParsInitializeThreads();
             eventLog1.WriteEntry("parsing thread start and sending message begin");
             foreach (var item in ListOfNumbers)
             {
@@ -248,12 +263,15 @@ namespace InvTransService
             string[,] DataInDB;
             Thread.Sleep(WaitTime);
             eventLog1.WriteEntry("parsing method start Working");
+            _serialPort.Close();
+            ReadThread.Abort();
+            RunThread.Abort();
+
             string[] Messages = ExtractCMTMessages(Buffer);
             DataInDB = CreateArray(Messages);
             
-
             InsertInDataBase(DataInDB);
-
+            ParseThread.Abort();
             while (true)
             {
                 // Keep the threading alive
@@ -371,8 +389,8 @@ namespace InvTransService
 
 
              }
-
-         }
+            
+        }
 
         private void InsertInDataBase(string[,] DataInDB)
          {
@@ -558,15 +576,15 @@ namespace InvTransService
              {
                
                 try
-                 {
+                {
                      int energy = (int.Parse(finalArray[i, 2]) << 16) + int.Parse(finalArray[i, 1]);
                      finalArray[i, 3] = energy.ToString();
-                 }
+                }
                  catch (ArgumentNullException) // handleing the one packet of energy lost
-                 {
+                {
                      int energy = -1;
                      finalArray[i, 3] = energy.ToString();
-                 }
+                }
                  
              }
              for (int i = 0; i < sims; i++)
@@ -576,7 +594,7 @@ namespace InvTransService
              }
 
              return returnArray;
-         }
+        }
 
         public static string[] ExtractCMTMessages(string input)
          {
@@ -598,7 +616,8 @@ namespace InvTransService
 
         private void ListenToComPort()
         {
-             _serialPort.DataReceived += SerialPort_DataReceived;
+            ReadSms();
+            _serialPort.DataReceived += SerialPort_DataReceived;
 
              while (true)
              {
@@ -624,7 +643,7 @@ namespace InvTransService
              }
              finally
              {
-                 RefreshFlag = 1;
+                 
              }
 
          }
