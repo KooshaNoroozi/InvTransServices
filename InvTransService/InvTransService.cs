@@ -73,14 +73,14 @@ namespace InvTransService
             if (ParseThread != null && ParseThread.IsAlive)
                 ParseThread.Abort();
         }
-        private void CheckTime2(object state)
-        {
-            Buffer = null;
-            OpeningPort();
-            eventLog1.WriteEntry("timer Click");
-            RunInitializeThreads();
-            ReadInitializeThreads();
-        }
+        //private void CheckTime2(object state)
+        //{
+        //    Buffer = null;
+        //    OpeningPort();
+        //    eventLog1.WriteEntry("timer Click");
+        //    RunInitializeThreads();
+        //    ReadInitializeThreads();
+        //}
         private void CheckTime(object state)
         {
             if (DateTime.Now >= _targetTime && DateTime.Now < _targetTime.AddMinutes(1))
