@@ -27,7 +27,9 @@ namespace InvTransService
         private Thread ParseThread;
         public SerialPort _serialPort;
         public string Buffer = null;
-        public static int RefreshFlag = 0;
+        public int maxRetries = 5;
+        public TimeSpan retryInterval = TimeSpan.FromMinutes(1); // Adjust as needed
+        public int retryCount = 0;
 
         public InvTransService()
         {
@@ -47,7 +49,35 @@ namespace InvTransService
 
         protected override void OnStart(string[] args)
         {
-            System.Diagnostics.Debugger.Launch();
+            Attempt();
+        }
+        public  void Attempt()
+        {
+            while (retryCount < maxRetries)
+            {
+                try
+                {
+                    // Your service operation here
+                    PerformServiceOperation();
+                    break; // Exit loop if operation succeeds
+                }
+                catch (Exception ex)
+                {
+                    retryCount++;
+                    if (retryCount >= maxRetries)
+                    {
+                        // Log the exception or take necessary action
+                        EventLog.WriteEntry($"Operation failed after {retryCount} retries: {ex.Message}");
+                        break;
+                    }
+                    // Wait before retrying
+                    System.Threading.Thread.Sleep(retryInterval);
+                }
+            }
+        }
+        public  void PerformServiceOperation()
+        {
+           // System.Diagnostics.Debugger.Launch();
             eventLog1.WriteEntry("MySimpleService started now.");
             _serialPort = new SerialPort("COM3"); // Replace with your COM port
             _serialPort.BaudRate = 9600;
@@ -55,14 +85,10 @@ namespace InvTransService
             _serialPort.StopBits = StopBits.One;
             _serialPort.DataBits = 8;
             _serialPort.DataReceived += new SerialDataReceivedEventHandler(SerialPort_DataReceived);
-            _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 14, 27, 0); // Set target time to 2:00 PM
-            _timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
-          //  _timer2 = new System.Threading.Timer(CheckTime2, null, 0, 300000);
-
-
-            
+            //_targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 14, 27, 0); // Set target time to 2:00 PM
+            //_timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
+            _timer2 = new System.Threading.Timer(CheckTime2, null, 0, 300000);
         }
-
         protected override void OnStop()
         {
             eventLog1.WriteEntry("MySimpleService stopped.");
@@ -73,14 +99,14 @@ namespace InvTransService
             if (ParseThread != null && ParseThread.IsAlive)
                 ParseThread.Abort();
         }
-        //private void CheckTime2(object state)
-        //{
-        //    Buffer = null;
-        //    OpeningPort();
-        //    eventLog1.WriteEntry("timer Click");
-        //    RunInitializeThreads();
-        //    ReadInitializeThreads();
-        //}
+        private void CheckTime2(object state)
+        {
+            Buffer = null;
+            OpeningPort();
+            eventLog1.WriteEntry("timer Click");
+            RunInitializeThreads();
+            ReadInitializeThreads();
+        }
         private void CheckTime(object state)
         {
             if (DateTime.Now >= _targetTime && DateTime.Now < _targetTime.AddMinutes(1))
@@ -135,9 +161,11 @@ namespace InvTransService
            {
                 _serialPort.Open();
            }
-           catch (Exception e)
+           catch (Exception)
            {
-           }
+                Thread.Sleep(30000);
+                Attempt();
+            }
             
         }
 
@@ -198,6 +226,10 @@ namespace InvTransService
                     catch (Exception e)
                     {
                         eventLog1.WriteEntry("this happened "+ e);
+                        Thread.Sleep(30000);
+
+                        Attempt();
+
                     }
                 }
                 Thread.Sleep(5000);
@@ -222,6 +254,8 @@ namespace InvTransService
                     }
                     catch (Exception)
                     {
+                        Thread.Sleep(30000);
+                        Attempt();
                     }
                 }
                 Thread.Sleep(5000);
@@ -252,6 +286,8 @@ namespace InvTransService
             catch (Exception e)
             {
                 eventLog1.WriteEntry("this is happendddd : "+ e);
+                Thread.Sleep(30000);
+                Attempt();
             }
 
         }
@@ -512,7 +548,9 @@ namespace InvTransService
                  }
                  catch (Exception )
                  {
-                 }
+                    Thread.Sleep(30000);
+                    Attempt();
+                }
              }
 
              ChekingError(DataInDB, TodayEnergy);

@@ -14,6 +14,7 @@ namespace InvTransService
         public ProjectInstaller()
         {
             InitializeComponent();
+            serviceInstaller1.StartType = System.ServiceProcess.ServiceStartMode.Automatic;
         }
     }
 }
