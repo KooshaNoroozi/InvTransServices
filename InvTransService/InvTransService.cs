@@ -178,8 +178,8 @@ namespace InvTransService
         private void SendingMessage()
         {
             
-            string QuestionEnergyLowWord = "MB30119=?";
-            string QuestionEnergyHighWord = "MB30120=?";
+            string QuestionEnergyLowWord = "MB30119?";
+            string QuestionEnergyHighWord = "MB30120?";
             string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
             string GetSimNumQuery = "SELECT SimNum FROM DeviceInfoTable";
             List<string> columnData = new List<string>();
