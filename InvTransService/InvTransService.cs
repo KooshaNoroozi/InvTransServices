@@ -78,16 +78,16 @@ namespace InvTransService
         public  void PerformServiceOperation()
         {
            // System.Diagnostics.Debugger.Launch();
-            eventLog1.WriteEntry("MySimpleService started now.");
+            eventLog1.WriteEntry("MySimpleService started now....");
             _serialPort = new SerialPort("COM3"); // Replace with your COM port
             _serialPort.BaudRate = 9600;
             _serialPort.Parity = Parity.None;
             _serialPort.StopBits = StopBits.One;
             _serialPort.DataBits = 8;
             _serialPort.DataReceived += new SerialDataReceivedEventHandler(SerialPort_DataReceived);
-            //_targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 14, 27, 0); // Set target time to 2:00 PM
-            //_timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
-            _timer2 = new System.Threading.Timer(CheckTime2, null, 0, 300000);
+            _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 14 , 20 , 0); // Set target time to 2:00 PM
+            _timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
+          //  _timer2 = new System.Threading.Timer(CheckTime2, null, 0, 300000);
         }
         protected override void OnStop()
         {
@@ -104,8 +104,9 @@ namespace InvTransService
             Buffer = null;
             OpeningPort();
             eventLog1.WriteEntry("timer Click");
-            RunInitializeThreads();
             ReadInitializeThreads();
+            RunInitializeThreads();
+            
         }
         private void CheckTime(object state)
         {
@@ -206,16 +207,28 @@ namespace InvTransService
             Thread.Sleep(400);
             //sending batch messages
             Thread.Sleep(2000);
-            ParsInitializeThreads();
-            eventLog1.WriteEntry("parsing thread start and sending message begin");
+            int hc = 0;
+            int lc = 0;
+            eventLog1.WriteEntry("sending message begin");
             foreach (var item in ListOfNumbers)
             {
                 if (_serialPort.IsOpen)
                 {
+                    hc++;
+                    Thread.Sleep(200);
                     _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
                     Thread.Sleep(400);
                     _serialPort.WriteLine(QuestionEnergyHighWord + (char)26 + '\r');
                     Thread.Sleep(400);
+                    eventLog1.WriteEntry("send highword message to "+ item + " done. :"+ hc );
+                    Thread.Sleep(6000);
+                    lc++;
+                    Thread.Sleep(400);
+                    _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
+                    Thread.Sleep(300);
+                    _serialPort.WriteLine(QuestionEnergyLowWord + (char)26 + '\r');
+                    Thread.Sleep(300);
+                    eventLog1.WriteEntry("send lowWord message to " + item + " done. :" + lc);
                 }
                 else
                 {
@@ -235,33 +248,10 @@ namespace InvTransService
                 Thread.Sleep(5000);
             }
             Thread.Sleep(2000);
-            foreach (var item in ListOfNumbers)
-            {
-                if (_serialPort.IsOpen)
-                {
-                    Thread.Sleep(400);
-                    _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
-                    Thread.Sleep(300);
-                    _serialPort.WriteLine(QuestionEnergyLowWord + (char)26 + '\r');
-                    Thread.Sleep(300);
-
-                }
-                else
-                {
-                    try
-                    {
-                        _serialPort.Open();
-                    }
-                    catch (Exception)
-                    {
-                        Thread.Sleep(30000);
-                        Attempt();
-                    }
-                }
-                Thread.Sleep(5000);
-
-            }
+            
             eventLog1.WriteEntry("sending message ended");
+            eventLog1.WriteEntry("parsing thread start ");
+            ParsInitializeThreads();
         }
 
         private void ReadSms()
@@ -295,7 +285,7 @@ namespace InvTransService
         private void ParsingMethod()
         {
             eventLog1.WriteEntry("parsing method start waiting");
-            int WaitTime = 120000;
+            int WaitTime = 300000;
             string[,] DataInDB;
             Thread.Sleep(WaitTime);
             eventLog1.WriteEntry("parsing method start Working");
@@ -308,12 +298,14 @@ namespace InvTransService
             
             InsertInDataBase(DataInDB);
             ParseThread.Abort();
+            Thread.Sleep(2000);
+            eventLog1.WriteEntry("EveryThing is ended");
             while (true)
             {
                 // Keep the threading alive
                 Thread.Sleep(200);
             }
-
+            
         }
        
         private void ChekingError(string[,] DataInDB, int[] TodayEnergy)
