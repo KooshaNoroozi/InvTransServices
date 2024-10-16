@@ -1,18 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
+using System.Data.SQLite;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO.Ports;
+using System.IO;
 using System.Linq;
 using System.ServiceProcess;
-using System.Text;
-using System.Threading.Tasks;
-using System.Data.SQLite;
-using System.IO.Ports;
-using System.Collections;
 using System.Text.RegularExpressions;
 using System.Threading;
-using System.Globalization;
+using TimeoutException = System.ServiceProcess.TimeoutException;
 
 namespace InvTransService
 {
@@ -30,6 +27,14 @@ namespace InvTransService
         public int maxRetries = 5;
         public TimeSpan retryInterval = TimeSpan.FromMinutes(1); // Adjust as needed
         public int retryCount = 0;
+        public bool LineIsAvialbale = true;
+        private string Question;
+        private int ErrNum = 0;
+        private int IgnNum = 0;
+        private int TrialNum = 0;
+        private string buffer = string.Empty;
+        private string serialResponse = string.Empty;
+        private ManualResetEventSlim waitForOkEvent = new ManualResetEventSlim(false);
 
         public InvTransService()
         {
@@ -42,16 +47,14 @@ namespace InvTransService
             eventLog1.Source = "MySource";
             eventLog1.Log = "MyNewLog";
 
-
-
-            
         }
 
         protected override void OnStart(string[] args)
         {
             Attempt();
         }
-        public  void Attempt()
+
+        public void Attempt()
         {
             while (retryCount < maxRetries)
             {
@@ -75,20 +78,32 @@ namespace InvTransService
                 }
             }
         }
-        public  void PerformServiceOperation()
+        
+        public void PerformServiceOperation()
         {
-           // System.Diagnostics.Debugger.Launch();
+            System.Diagnostics.Debugger.Launch();
             eventLog1.WriteEntry("MySimpleService started now....");
-            _serialPort = new SerialPort("COM3"); // Replace with your COM port
+            _serialPort = new SerialPort($"COM{ListAvailablePorts()}"); // Replace with your COM port
             _serialPort.BaudRate = 9600;
             _serialPort.Parity = Parity.None;
             _serialPort.StopBits = StopBits.One;
             _serialPort.DataBits = 8;
             _serialPort.DataReceived += new SerialDataReceivedEventHandler(SerialPort_DataReceived);
-            _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 14 , 20 , 0); // Set target time to 2:00 PM
+            _targetTime = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 15, 10, 0); // Set target time to 2:00 PM
             _timer = new System.Threading.Timer(CheckTime, null, 0, 60000); // Check every minute
-          //  _timer2 = new System.Threading.Timer(CheckTime2, null, 0, 300000);
+                                                                            //  _timer2 = new System.Threading.Timer(CheckTime2, null, 0, 300000);
         }
+        
+        private string ListAvailablePorts()
+        {
+            // Get all available COM ports
+            string[] ports = SerialPort.GetPortNames();
+            string myavport = ports[0];
+            return myavport[3].ToString();
+            // Display available ports in a Label or MessageBox for reference
+            
+        }
+        
         protected override void OnStop()
         {
             eventLog1.WriteEntry("MySimpleService stopped.");
@@ -99,6 +114,7 @@ namespace InvTransService
             if (ParseThread != null && ParseThread.IsAlive)
                 ParseThread.Abort();
         }
+        
         private void CheckTime2(object state)
         {
             Buffer = null;
@@ -106,8 +122,9 @@ namespace InvTransService
             eventLog1.WriteEntry("timer Click");
             ReadInitializeThreads();
             RunInitializeThreads();
-            
+
         }
+
         private void CheckTime(object state)
         {
             if (DateTime.Now >= _targetTime && DateTime.Now < _targetTime.AddMinutes(1))
@@ -119,17 +136,16 @@ namespace InvTransService
             }
 
         }
-
-       
+        
         private void RunInitializeThreads()
         {
-           
+
             // Initialize and start the Run thread
             RunThread = new Thread(RunningMethod);
             RunThread.IsBackground = true;
             RunThread.Start();
         }
-
+        
         private void ReadInitializeThreads()
         {
             // Initialize and start the COM port listening thread
@@ -138,6 +154,7 @@ namespace InvTransService
             ReadThread.Start();
 
         }
+        
         private void ParsInitializeThreads()
         {
             //Initialize and start the parsing thraed
@@ -145,6 +162,7 @@ namespace InvTransService
             ParseThread.IsBackground = true;
             ParseThread.Start();
         }
+        
         public static string ConvertGregorianToSolar(DateTime gregorianDate)
         {
             PersianCalendar persianCalendar = new PersianCalendar();
@@ -154,31 +172,41 @@ namespace InvTransService
 
             return $"{year}-{month:D2}-{day:D2}";
         }
-
+        
         private void OpeningPort()
         {
-            
-           try
-           {
+
+            try
+            {
                 _serialPort.Open();
-           }
-           catch (Exception)
-           {
+            }
+            catch (Exception)
+            {
                 Thread.Sleep(30000);
                 Attempt();
             }
-            
-        }
 
+        }
+        
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             string data = _serialPort.ReadExisting();
             Buffer += data;
+            if (LineIsAvialbale || data.Contains("OK") || data.Contains(">") || data.Contains("ERR"))
+            {
+                serialResponse += data;
+                // Check if the response contains "OK"
+                if (serialResponse.Contains("OK") || serialResponse.Contains(">") || serialResponse.Contains("AT") || serialResponse.Contains("+C"))
+                {
+                    TrialNum = 0;
+                    waitForOkEvent.Set();  // Signal the waiting thread
+                }
+            }
         }
-
+        
         private void SendingMessage()
         {
-            
+
             string QuestionEnergyLowWord = "MB30119?";
             string QuestionEnergyHighWord = "MB30120?";
             string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
@@ -198,13 +226,13 @@ namespace InvTransService
             }
             string[] ListOfNumbers = columnData.ToArray();
             //opening the port for sending message
-            
+
             //initializing the sms procedure
 
-            _serialPort.WriteLine("AT+CMGF=1\r"); // Set SMS text mode
-            Thread.Sleep(400);
-            _serialPort.WriteLine("AT+CSCS=\"GSM\"" + '\r');
-            Thread.Sleep(400);
+            TrySndCmd("AT+CMGF=1\r");
+            Thread.Sleep(300);
+            TrySndCmd("AT+CSCS=\"GSM\"" + '\r');
+            Thread.Sleep(300);
             //sending batch messages
             Thread.Sleep(2000);
             int hc = 0;
@@ -214,21 +242,27 @@ namespace InvTransService
             {
                 if (_serialPort.IsOpen)
                 {
+                    LineIsAvialbale = false;
                     hc++;
                     Thread.Sleep(200);
-                    _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
+                    TrySndCmd("AT+CMGS=" + "\"" + item + "\"" + '\r');
                     Thread.Sleep(400);
-                    _serialPort.WriteLine(QuestionEnergyHighWord + (char)26 + '\r');
+                    TrySndCmd(QuestionEnergyHighWord + (char)26 + '\r');
                     Thread.Sleep(400);
-                    eventLog1.WriteEntry("send highword message to "+ item + " done. :"+ hc );
+                    eventLog1.WriteEntry("send highword message to " + item + " done. :" + hc);
+                    LineIsAvialbale = true;
+
                     Thread.Sleep(6000);
+
+                    LineIsAvialbale = false;
                     lc++;
-                    Thread.Sleep(400);
-                    _serialPort.WriteLine("AT+CMGS=" + "\"" + item + "\"" + '\r');
+                    Thread.Sleep(200);
+                    TrySndCmd("AT+CMGS=" + "\"" + item + "\"" + '\r');
                     Thread.Sleep(300);
-                    _serialPort.WriteLine(QuestionEnergyLowWord + (char)26 + '\r');
+                    TrySndCmd(QuestionEnergyLowWord + (char)26 + '\r');
                     Thread.Sleep(300);
                     eventLog1.WriteEntry("send lowWord message to " + item + " done. :" + lc);
+                    LineIsAvialbale = true;
                 }
                 else
                 {
@@ -238,7 +272,7 @@ namespace InvTransService
                     }
                     catch (Exception e)
                     {
-                        eventLog1.WriteEntry("this happened "+ e);
+                        eventLog1.WriteEntry("this happened " + e);
                         Thread.Sleep(30000);
 
                         Attempt();
@@ -248,12 +282,27 @@ namespace InvTransService
                 Thread.Sleep(5000);
             }
             Thread.Sleep(2000);
-            
+
             eventLog1.WriteEntry("sending message ended");
             eventLog1.WriteEntry("parsing thread start ");
             ParsInitializeThreads();
         }
+        
+        public void SendCommand(string command)
+        {
+            waitForOkEvent.Reset();  // Reset the event before sending the command
+            serialResponse = string.Empty;  // Clear any previous response
 
+            // Send the command to the serial port
+            _serialPort.WriteLine(command);
+
+            // Wait for the "OK" response (timeout in milliseconds can be adjusted)
+            if (!waitForOkEvent.Wait(10000))  // Timeout after 5 seconds
+            {
+                throw new TimeoutException("No OK response received within the timeout period.");
+            }
+        }
+        
         private void ReadSms()
         {
             try
@@ -269,415 +318,476 @@ namespace InvTransService
                 _serialPort.WriteLine("AT+CNMI=2,2,0,0,0\r");
                 Thread.Sleep(400);
 
-                // Read a specific message (example: message at index 1)
-                // _serialPort.WriteLine("AT+CMGR=1\r");
+                _serialPort.WriteLine("ATE0\r"); // delete pre sms
                 Thread.Sleep(500);
             }
             catch (Exception e)
             {
-                eventLog1.WriteEntry("this is happendddd : "+ e);
+                eventLog1.WriteEntry("this is happendddd : " + e);
                 Thread.Sleep(30000);
                 Attempt();
             }
 
         }
 
+        private void TrySndCmd(string Command)
+        {
+            try
+            {
+                SendCommand(Command);  // Example command
+                                       // Continue execution after receiving "OK"
+            }
+            catch (TimeoutException ex)
+            {
+                ErrNum++;
+                TrialNum++;
+                if (TrialNum < 4)
+                {
+                    Thread.Sleep(5000);
+                    TrySndCmd(Command);
+                }
+                else
+                {
+                    IgnNum++;
+                }
+
+            }
+        }
+        
         private void ParsingMethod()
         {
+            string ErrRep = "In this run " + ErrNum + " errors happend";
+            string IgnoranceRep = "In this run " + IgnNum + " Ignorance happend";
             eventLog1.WriteEntry("parsing method start waiting");
+
+            
             int WaitTime = 300000;
+
             string[,] DataInDB;
             Thread.Sleep(WaitTime);
+            eventLog1.WriteEntry(ErrRep + " and " + IgnoranceRep);
+            Thread.Sleep(5000);
             eventLog1.WriteEntry("parsing method start Working");
             _serialPort.Close();
-            ReadThread.Abort();
-            RunThread.Abort();
+            WriteToFile(Buffer);
 
             string[] Messages = ExtractCMTMessages(Buffer);
+            WriteToFile(Messages);
             DataInDB = CreateArray(Messages);
-            
+            WriteToFile(DataInDB);
             InsertInDataBase(DataInDB);
             ParseThread.Abort();
             Thread.Sleep(2000);
             eventLog1.WriteEntry("EveryThing is ended");
+            ParseThread.Abort();
+            ReadThread.Abort();
+            RunThread.Abort();
             while (true)
             {
                 // Keep the threading alive
                 Thread.Sleep(200);
             }
-            
+
         }
-       
+        
         private void ChekingError(string[,] DataInDB, int[] TodayEnergy)
-         {
-             string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
-             string GetSimNumQuery = "SELECT SimNum , SID FROM DeviceInfoTable";
-             List<string> AllSimList = new List<string>();
-             List<string> SidList = new List<string>();
-             List<string> ResSimList = new List<string>();
-             using (SQLiteConnection connection = new SQLiteConnection(connectionString))
-             {
-                 SQLiteCommand command = new SQLiteCommand(GetSimNumQuery, connection);
-                 connection.Open();
+        {
+            string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
+            string GetSimNumQuery = "SELECT SimNum , SID FROM DeviceInfoTable";
+            List<string> AllSimList = new List<string>();
+            List<string> SidList = new List<string>();
+            List<string> ResSimList = new List<string>();
+            using (SQLiteConnection connection = new SQLiteConnection(connectionString))
+            {
+                SQLiteCommand command = new SQLiteCommand(GetSimNumQuery, connection);
+                connection.Open();
 
-                 using (SQLiteDataReader reader = command.ExecuteReader())
-                 {
-                     while (reader.Read())
-                     {
-                         AllSimList.Add(reader["SimNum"].ToString());
-                         SidList.Add(reader["sid"].ToString());
-                     }
-                 }
-             }
-             string[,] StatArr = new string[SidList.Count, 3];
+                using (SQLiteDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        AllSimList.Add(reader["SimNum"].ToString());
+                        SidList.Add(reader["sid"].ToString());
+                    }
+                }
+            }
+            string[,] StatArr = new string[SidList.Count, 3];
 
-             for (int i = 0; i < DataInDB.GetLength(0); i++)
-             {
-                 ResSimList.Add(DataInDB[i, 0]);
-             }
-             for (int i = 0; i < SidList.Count; i++)
-             {
-                 StatArr[i, 0] = SidList[i];
-             }
+            for (int i = 0; i < DataInDB.GetLength(0); i++)
+            {
+                ResSimList.Add(DataInDB[i, 0]);
+            }
+            for (int i = 0; i < SidList.Count; i++)
+            {
+                StatArr[i, 0] = SidList[i];
+            }
 
-             for (int i = 0; i < AllSimList.Count; i++)
-             {
-                 StatArr[i, 1] = AllSimList[i];
-             }
-             for (int i = 0; i < AllSimList.Count; i++)
-             {
-                 int index = ResSimList.IndexOf(AllSimList[i]);
-                 if (index != -1)// contians the number
-                 {
+            for (int i = 0; i < AllSimList.Count; i++)
+            {
+                StatArr[i, 1] = AllSimList[i];
+            }
+            for (int i = 0; i < AllSimList.Count; i++)
+            {
+                int index = ResSimList.IndexOf(AllSimList[i]);
+                if (index != -1)// contians the number
+                {
 
-                     if (TodayEnergy[index] != -1 && TodayEnergy[index] < 10)
-                     {
-                         StatArr[i, 2] = "Warning";
-                     }
-                     else if (TodayEnergy[index] != -1 && TodayEnergy[index] > 10)
-                     {
-                         StatArr[i, 2] = "OK";
-                     }
-                     else if (TodayEnergy[index] == -1)
-                     {
-                         StatArr[i, 2] = "Fail";
-                     }
-                 }
-                 else // this number not responses
-                 {
-                     StatArr[i, 2] = "Fail";
-                 }
-             }
+                    if (TodayEnergy[index] != -1 && TodayEnergy[index] < 10)
+                    {
+                        StatArr[i, 2] = "Warning";
+                    }
+                    else if (TodayEnergy[index] != -1 && TodayEnergy[index] > 10)
+                    {
+                        StatArr[i, 2] = "OK";
+                    }
+                    else if (TodayEnergy[index] == -1)
+                    {
+                        StatArr[i, 2] = "Fail";
+                    }
+                }
+                else // this number not responses
+                {
+                    StatArr[i, 2] = "Fail";
+                }
+            }
 
-             using (SQLiteConnection connection = new SQLiteConnection(connectionString))
-             {
+            using (SQLiteConnection connection = new SQLiteConnection(connectionString))
+            {
 
-                 connection.Open();
-                 string InsStatusQuery;
-                 DateTime currentDate = DateTime.Today;
-                 string today = ConvertGregorianToSolar(currentDate);
+                connection.Open();
+                string InsStatusQuery;
+                DateTime currentDate = DateTime.Today;
+                string today = ConvertGregorianToSolar(currentDate);
                 //  string today = currentDate.ToString("yyyy-MM-dd");
                 for (int i = 0; i < StatArr.GetLength(0); i++)
-                 {
-                     if (StatArr[i, 2] == "OK")
-                     {
-                         InsStatusQuery = " update DeviceTodayFeed set status =@status where (sid=@OKsid And date=@date );";
-                         using (SQLiteCommand command = new SQLiteCommand(InsStatusQuery, connection))
-                         {
-                             command.Parameters.AddWithValue("@OKsid", StatArr[i, 0]);
-                             command.Parameters.AddWithValue("@status", StatArr[i, 2]);
-                             command.Parameters.AddWithValue("@date", today);
-                             command.ExecuteNonQuery();
-                         }
-                     }
-                     if (StatArr[i, 2] == "Warning")
-                     {
-                         InsStatusQuery = " update DeviceTodayFeed set status =@status where (sid=@Warningsid And date=@date);";
-                         using (SQLiteCommand command = new SQLiteCommand(InsStatusQuery, connection))
-                         {
-                             command.Parameters.AddWithValue("@Warningsid", StatArr[i, 0]);
-                             command.Parameters.AddWithValue("@status", StatArr[i, 2]);
-                             command.Parameters.AddWithValue("@date", today);
-                             command.ExecuteNonQuery();
-                         }
-                     }
-                     if (StatArr[i, 2] == "Fail")
-                     {
-                         InsStatusQuery = "INSERT INTO DeviceTodayFeed (sid, energy, date, status) VALUES (@sid, 0 , @date, @status);";
-                         using (SQLiteCommand command = new SQLiteCommand(InsStatusQuery, connection))
-                         {
-                             command.Parameters.AddWithValue("@sid", StatArr[i, 0]);
-                             command.Parameters.AddWithValue("@date", today);
-                             command.Parameters.AddWithValue("@status", StatArr[i, 2]);
-                             command.ExecuteNonQuery();
-                         }
-                     }
+                {
+                    if (StatArr[i, 2] == "OK")
+                    {
+                        InsStatusQuery = " update DeviceTodayFeed set status =@status where (sid=@OKsid And date=@date );";
+                        using (SQLiteCommand command = new SQLiteCommand(InsStatusQuery, connection))
+                        {
+                            command.Parameters.AddWithValue("@OKsid", StatArr[i, 0]);
+                            command.Parameters.AddWithValue("@status", StatArr[i, 2]);
+                            command.Parameters.AddWithValue("@date", today);
+                            command.ExecuteNonQuery();
+                        }
+                    }
+                    if (StatArr[i, 2] == "Warning")
+                    {
+                        InsStatusQuery = " update DeviceTodayFeed set status =@status where (sid=@Warningsid And date=@date);";
+                        using (SQLiteCommand command = new SQLiteCommand(InsStatusQuery, connection))
+                        {
+                            command.Parameters.AddWithValue("@Warningsid", StatArr[i, 0]);
+                            command.Parameters.AddWithValue("@status", StatArr[i, 2]);
+                            command.Parameters.AddWithValue("@date", today);
+                            command.ExecuteNonQuery();
+                        }
+                    }
+                    if (StatArr[i, 2] == "Fail")
+                    {
+                        InsStatusQuery = "INSERT INTO DeviceTodayFeed (sid, energy, date, status) VALUES (@sid, 0 , @date, @status);";
+                        using (SQLiteCommand command = new SQLiteCommand(InsStatusQuery, connection))
+                        {
+                            command.Parameters.AddWithValue("@sid", StatArr[i, 0]);
+                            command.Parameters.AddWithValue("@date", today);
+                            command.Parameters.AddWithValue("@status", StatArr[i, 2]);
+                            command.ExecuteNonQuery();
+                        }
+                    }
 
-                 }
+                }
 
 
-             }
-            
+            }
+
         }
-
+        
         private void InsertInDataBase(string[,] DataInDB)
-         {
+        {
 
-             int[] YesterdayEnergy = new int[DataInDB.GetLength(0)];
-             int[] TodayEnergy = new int[DataInDB.GetLength(0)];
+            int[] YesterdayEnergy = new int[DataInDB.GetLength(0)];
+            int[] TodayEnergy = new int[DataInDB.GetLength(0)];
 
-             string simnum;
-             string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
-             using (SQLiteConnection connection = new SQLiteConnection(connectionString))
-             {
-                 try
-                 {
-                     connection.Open();
-                     // Create a table if it doesn't exist
-                     string createTableQuery = "CREATE TABLE IF NOT EXISTS DeviceFeedLog (SID INTEGER,Energy Integer,Date TEXT)";
-                     using (SQLiteCommand createTableCmd = new SQLiteCommand(createTableQuery, connection))
-                     {
-                         createTableCmd.ExecuteNonQuery();
-                     }
+            string simnum;
+            string connectionString = "Data Source=C:\\Users\\Koosha\\source\\repos\\GetNum\\GetNum\\bin\\Debug\\library.db";
+            using (SQLiteConnection connection = new SQLiteConnection(connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    // Create a table if it doesn't exist
+                    string createTableQuery = "CREATE TABLE IF NOT EXISTS DeviceFeedLog (SID INTEGER,Energy Integer,Date TEXT)";
+                    using (SQLiteCommand createTableCmd = new SQLiteCommand(createTableQuery, connection))
+                    {
+                        createTableCmd.ExecuteNonQuery();
+                    }
 
-                     // Insert data from TextBox
-                     DateTime currentDate = DateTime.Today;
-                     string today = ConvertGregorianToSolar( currentDate);
+                    // Insert data from TextBox
+                    DateTime currentDate = DateTime.Today;
+                    string today = ConvertGregorianToSolar(currentDate);
 
-                     for (int i = 0; i < DataInDB.GetLength(0); i++)
-                     {
-                         if (DataInDB[i, 1] != "-1")
-                         {
-                             simnum = DataInDB[i, 0];
+                    for (int i = 0; i < DataInDB.GetLength(0); i++)
+                    {
+                        if (DataInDB[i, 1] != "-1")
+                        {
+                            simnum = DataInDB[i, 0];
 
-                             string selectSidQuery = $"SELECT sid FROM deviceinfotable WHERE simnum = '{simnum}'";
-                             using (var command = new SQLiteCommand(selectSidQuery, connection))
-                             {
-                                 int sid = Convert.ToInt32(command.ExecuteScalar());
+                            string selectSidQuery = $"SELECT sid FROM deviceinfotable WHERE simnum = '{simnum}'";
+                            using (var command = new SQLiteCommand(selectSidQuery, connection))
+                            {
+                                int sid = Convert.ToInt32(command.ExecuteScalar());
 
-                                 // Insert new row into devicefeedlog
-                                 string insertDataQuery = "INSERT INTO devicefeedlog (sid, energy, date) VALUES (@sid, @energy, @date)";
-                                 using (var insertCommand = new SQLiteCommand(insertDataQuery, connection))
-                                 {
-                                     insertCommand.Parameters.AddWithValue("@sid", sid);
-                                     insertCommand.Parameters.AddWithValue("@energy", DataInDB[i, 1]);
-                                     insertCommand.Parameters.AddWithValue("@date", today);
-                                     insertCommand.ExecuteNonQuery();
-                                 }
-                             }
-                         }
-                     }
-
-
+                                // Insert new row into devicefeedlog
+                                string insertDataQuery = "INSERT INTO devicefeedlog (sid, energy, date) VALUES (@sid, @energy, @date)";
+                                using (var insertCommand = new SQLiteCommand(insertDataQuery, connection))
+                                {
+                                    insertCommand.Parameters.AddWithValue("@sid", sid);
+                                    insertCommand.Parameters.AddWithValue("@energy", DataInDB[i, 1]);
+                                    insertCommand.Parameters.AddWithValue("@date", today);
+                                    insertCommand.ExecuteNonQuery();
+                                }
+                            }
+                        }
+                    }
 
 
-                     // Create a table2 if it doesn't exist
-                     string createTable2Query = "CREATE TABLE IF NOT EXISTS DeviceTodayFeed (SID INTEGER,Energy Integer,Date TEXT, Status TEXT)";
-                     using (SQLiteCommand createTable2Cmd = new SQLiteCommand(createTable2Query, connection))
-                     {
-                         createTable2Cmd.ExecuteNonQuery();
-                     }
 
-                     
-                     currentDate = DateTime.Today;
-                     today = ConvertGregorianToSolar(currentDate);
+
+                    // Create a table2 if it doesn't exist
+                    string createTable2Query = "CREATE TABLE IF NOT EXISTS DeviceTodayFeed (SID INTEGER,Energy Integer,Date TEXT, Status TEXT)";
+                    using (SQLiteCommand createTable2Cmd = new SQLiteCommand(createTable2Query, connection))
+                    {
+                        createTable2Cmd.ExecuteNonQuery();
+                    }
+
+
+                    currentDate = DateTime.Today;
+                    today = ConvertGregorianToSolar(currentDate);
                     string yesterday = ConvertGregorianToSolar(currentDate.AddDays(-1));
 
-                     for (int i = 0; i < DataInDB.GetLength(0); i++)
-                     {
-                         simnum = DataInDB[i, 0];
-                         string selectSidQuery = $"SELECT sid FROM deviceinfotable WHERE simnum = '{simnum}'";
-                         using (var command = new SQLiteCommand(selectSidQuery, connection))
-                         {
-                             int sid = Convert.ToInt32(command.ExecuteScalar());
+                    for (int i = 0; i < DataInDB.GetLength(0); i++)
+                    {
+                        simnum = DataInDB[i, 0];
+                        string selectSidQuery = $"SELECT sid FROM deviceinfotable WHERE simnum = '{simnum}'";
+                        using (var command = new SQLiteCommand(selectSidQuery, connection))
+                        {
+                            int sid = Convert.ToInt32(command.ExecuteScalar());
 
-                             // Insert new row into devicefeedlog
-                             string SelectyesterdayEnergy = $"SELECT energy FROM devicefeedlog WHERE(sid={sid} AND date='{yesterday}')";
-                             using (var selectyesterdayenergyCMD = new SQLiteCommand(SelectyesterdayEnergy, connection))
-                             {
-                                 var yesenergy = selectyesterdayenergyCMD.ExecuteScalar();
-                                 YesterdayEnergy[i] = yesenergy != null ? Convert.ToInt32(yesenergy) : 0;
-                                 selectyesterdayenergyCMD.ExecuteNonQuery();
-                             }
-                         }
-                     }
-                     for (int i = 0; i < DataInDB.GetLength(0); i++)
-                     {
-                         TodayEnergy[i] = Convert.ToInt32(DataInDB[i, 1]) - YesterdayEnergy[i];
-                         if (DataInDB[i, 1] == "-1")
-                         {
-                             TodayEnergy[i] = -1;
-                         }
-                     }
-
-
+                            // Insert new row into devicefeedlog
+                            string SelectyesterdayEnergy = $"SELECT energy FROM devicefeedlog WHERE(sid={sid} AND date='{yesterday}')";
+                            using (var selectyesterdayenergyCMD = new SQLiteCommand(SelectyesterdayEnergy, connection))
+                            {
+                                var yesenergy = selectyesterdayenergyCMD.ExecuteScalar();
+                                YesterdayEnergy[i] = yesenergy != null ? Convert.ToInt32(yesenergy) : 0;
+                                selectyesterdayenergyCMD.ExecuteNonQuery();
+                            }
+                        }
+                    }
+                    for (int i = 0; i < DataInDB.GetLength(0); i++)
+                    {
+                        TodayEnergy[i] = Convert.ToInt32(DataInDB[i, 1]) - YesterdayEnergy[i];
+                        if (DataInDB[i, 1] == "-1")
+                        {
+                            TodayEnergy[i] = -1;
+                        }
+                    }
 
 
 
-                     for (int i = 0; i < DataInDB.GetLength(0); i++)
-                     {
-                         if (DataInDB[i, 1] != "-1")
-                         {
-                             simnum = DataInDB[i, 0];
-                             string selectSidQuery = $"SELECT sid FROM deviceinfotable WHERE simnum = '{simnum}'";
-                             using (var command = new SQLiteCommand(selectSidQuery, connection))
-                             {
-                                 int sid = Convert.ToInt32(command.ExecuteScalar());
-                                 // Insert new row into devicefeedlog
-                                 string insertDataQuery = "INSERT INTO DeviceTodayFeed (sid, energy, date) VALUES (@sid, @energy, @date)";
-                                 using (var insertCommand = new SQLiteCommand(insertDataQuery, connection))
-                                 {
-                                     insertCommand.Parameters.AddWithValue("@sid", sid);
-                                     insertCommand.Parameters.AddWithValue("@energy", TodayEnergy[i]);
-                                     insertCommand.Parameters.AddWithValue("@date", today);
-                                     insertCommand.ExecuteNonQuery();
-                                 }
-                             }
-                         }
 
 
-                     }
-                 }
-                 catch (Exception )
-                 {
+                    for (int i = 0; i < DataInDB.GetLength(0); i++)
+                    {
+                        if (DataInDB[i, 1] != "-1")
+                        {
+                            simnum = DataInDB[i, 0];
+                            string selectSidQuery = $"SELECT sid FROM deviceinfotable WHERE simnum = '{simnum}'";
+                            using (var command = new SQLiteCommand(selectSidQuery, connection))
+                            {
+                                int sid = Convert.ToInt32(command.ExecuteScalar());
+                                // Insert new row into devicefeedlog
+                                string insertDataQuery = "INSERT INTO DeviceTodayFeed (sid, energy, date) VALUES (@sid, @energy, @date)";
+                                using (var insertCommand = new SQLiteCommand(insertDataQuery, connection))
+                                {
+                                    insertCommand.Parameters.AddWithValue("@sid", sid);
+                                    insertCommand.Parameters.AddWithValue("@energy", TodayEnergy[i]);
+                                    insertCommand.Parameters.AddWithValue("@date", today);
+                                    insertCommand.ExecuteNonQuery();
+                                }
+                            }
+                        }
+
+
+                    }
+                }
+                catch (Exception)
+                {
                     Thread.Sleep(30000);
                     Attempt();
                 }
-             }
+            }
 
-             ChekingError(DataInDB, TodayEnergy);
-             
+            ChekingError(DataInDB, TodayEnergy);
+
         }
-
+        
         private string[,] CreateArray(string[] Messages)
-         {
-             string[,] resultArray = new string[Messages.Length, 2];
+        {
+            string[,] resultArray = new string[Messages.Length, 2];
 
-             for (int t = 0; t < Messages.Length; t++)
-             {
-                 string input = Messages[t];
+            for (int t = 0; t < Messages.Length; t++)
+            {
+                string input = Messages[t];
 
-                 // Split the input string into lines
-                 string[] lines = input.Split(new[] { '\n' }, StringSplitOptions.None);
+                // Split the input string into lines
+                string[] lines = input.Split(new[] { '\n' }, StringSplitOptions.None);
 
-                 for (int i = 0; i < lines.Length - 1; i++)
-                 {
-                     // Regex to find 13-digit substrings starting with +98
-                     Match match = Regex.Match(lines[i], @"\+98\d{10}");
+                for (int i = 0; i < lines.Length - 1; i++)
+                {
+                    // Regex to find 13-digit substrings starting with +98
+                    Match match = Regex.Match(lines[i], @"\+98\d{10}");
 
-                     if (match.Success)
-                     {
-                         resultArray[t, 0] = match.Value;
-                         resultArray[t, 1] = lines[i + 1];
-                         break; // Stop after finding the first match
-                     }
-                 }
-             }
+                    if (match.Success)
+                    {
+                        resultArray[t, 0] = match.Value;
+                        resultArray[t, 1] = lines[i + 1];
+                        break; // Stop after finding the first match
+                    }
+                }
+            }
 
-             HashSet<string> uniqueSims = new HashSet<string>();
-             for (int j = 0; j < Messages.Length; j++)
-             {
-                 uniqueSims.Add(resultArray[j, 0]);
-             }
-             int sims = uniqueSims.Count;
-             string[] arrayOfSims = uniqueSims.ToArray();
-             string[,] finalArray = new string[sims, 4]; // [0-simnumbers][1-highword][2-lowword][3-energy]
-             string[,] returnArray = new string[sims, 2];
-             for (int k = 0; k < sims; k++)
-             {
-                 finalArray[k, 0] = arrayOfSims[k];
-             }
-             for (int j = 0; j < Messages.Length; j++)
-             {
-                 for (int i = 0; i < sims; i++)
-                 {
-                     if (finalArray[i, 0] == resultArray[j, 0] && resultArray[j, 1].Contains("MB30119="))
-                     {
-                         finalArray[i, 1] = resultArray[j, 1].Substring(8);
-                     }
-                     if (finalArray[i, 0] == resultArray[j, 0] && resultArray[j, 1].Contains("MB30120="))
-                     {
-                         finalArray[i, 2] = resultArray[j, 1].Substring(8);
-                     }
-                 }
-             }
+            HashSet<string> uniqueSims = new HashSet<string>();
+            for (int j = 0; j < Messages.Length; j++)
+            {
+                uniqueSims.Add(resultArray[j, 0]);
+            }
+            int sims = uniqueSims.Count;
+            string[] arrayOfSims = uniqueSims.ToArray();
+            string[,] finalArray = new string[sims, 4]; // [0-simnumbers][1-highword][2-lowword][3-energy]
+            string[,] returnArray = new string[sims, 2];
+            for (int k = 0; k < sims; k++)
+            {
+                finalArray[k, 0] = arrayOfSims[k];
+            }
+            for (int j = 0; j < Messages.Length; j++)
+            {
+                for (int i = 0; i < sims; i++)
+                {
+                    if (finalArray[i, 0] == resultArray[j, 0] && resultArray[j, 1].Contains("MB30119="))
+                    {
+                        finalArray[i, 1] = resultArray[j, 1].Substring(8);
+                    }
+                    if (finalArray[i, 0] == resultArray[j, 0] && resultArray[j, 1].Contains("MB30120="))
+                    {
+                        finalArray[i, 2] = resultArray[j, 1].Substring(8);
+                    }
+                }
+            }
 
-             for (int i = 0; i < sims; i++)
-             {
-               
+            for (int i = 0; i < sims; i++)
+            {
+
                 try
                 {
-                     int energy = (int.Parse(finalArray[i, 2]) << 16) + int.Parse(finalArray[i, 1]);
-                     finalArray[i, 3] = energy.ToString();
+                    int energy = (int.Parse(finalArray[i, 2]) << 16) + int.Parse(finalArray[i, 1]);
+                    finalArray[i, 3] = energy.ToString();
                 }
-                 catch (ArgumentNullException) // handleing the one packet of energy lost
+                catch (ArgumentNullException) // handleing the one packet of energy lost
                 {
-                     int energy = -1;
-                     finalArray[i, 3] = energy.ToString();
+                    int energy = -1;
+                    finalArray[i, 3] = energy.ToString();
                 }
-                 
-             }
-             for (int i = 0; i < sims; i++)
-             {
-                 returnArray[i, 0] = finalArray[i, 0];
-                 returnArray[i, 1] = finalArray[i, 3];
-             }
 
-             return returnArray;
+            }
+            for (int i = 0; i < sims; i++)
+            {
+                returnArray[i, 0] = finalArray[i, 0];
+                returnArray[i, 1] = finalArray[i, 3];
+            }
+
+            return returnArray;
         }
+        
+        public static string[] ExtractCMTMessages(string input)//only uses for one line answers
+        {
+            List<string> messages = new List<string>();
+            string[] lines = input.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
-        public static string[] ExtractCMTMessages(string input)
-         {
-             List<string> messages = new List<string>();
-             string[] lines = input.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (lines[i].StartsWith("+CMT:") && !lines[i].Contains("rancel") && lines[i+1].Contains("MB") && lines[i].Contains("+989"))
+                {
+                    string message = lines[i];
+                    if (i + 1 < lines.Length) message += "\n" + lines[i + 1];
+                    messages.Add(message);
+                }
+            }
 
-             for (int i = 0; i < lines.Length; i++)
-             {
-                 if (lines[i].StartsWith("+CMT:"))
-                 {
-                     string message = lines[i];
-                     if (i + 1 < lines.Length) message += "\n" + lines[i + 1];
-                     messages.Add(message);
-                 }
-             }
-
-             return messages.ToArray();
-         }
-
+            return messages.ToArray();
+        }
+        
         private void ListenToComPort()
         {
             ReadSms();
             _serialPort.DataReceived += SerialPort_DataReceived;
 
-             while (true)
-             {
-                 // Keep the thread alive
-                 Thread.Sleep(200);
-             }
+            while (true)
+            {
+                // Keep the thread alive
+                Thread.Sleep(200);
+            }
         }
         
-         public void RunningMethod()
-         {
-             try
-             {
-                 SendingMessage();
-                 while (true)
-                 {
-                     // Keep the thread alive
-                     Thread.Sleep(200);
-                 }
-             }
-             catch (ThreadAbortException)
-             {
-                 Console.WriteLine("ThreadAbortException caught. Cleaning up...");
-             }
-             finally
-             {
-                 
-             }
+        public void RunningMethod()
+        {
+            
+            try
+            {
+                SendingMessage();
+                while (true)
+                {
+                    // Keep the thread alive
+                    Thread.Sleep(200);
+                }
+            }
+            catch (ThreadAbortException)
+            {
+                Console.WriteLine("ThreadAbortException caught. Cleaning up...");
+            }
+            finally
+            {
 
-         }
-         
+            }
 
+        }
+
+        static void WriteToFile(string input)
+        {
+            string filePath = @"C:\Users\Koosha\source\repos\GetNum\GetNum\bin\Debug\inputbufferString.txt";
+            File.AppendAllText(filePath, input + Environment.NewLine);
+        }
+
+        static void WriteToFile(string[] inputArray)
+        {
+            string filePath = @"C:\Users\Koosha\source\repos\GetNum\GetNum\bin\Debug\inputbufferArr.txt";
+            foreach (string input in inputArray)
+            {
+                File.AppendAllText(filePath, input + Environment.NewLine);
+            }
+        }
+
+        static void WriteToFile(string[,] inputArray)
+        {
+            string filePath = @"C:\Users\Koosha\source\repos\GetNum\GetNum\bin\Debug\inputbuffer2dArr.txt";
+
+            for (int i = 0; i < inputArray.GetLength(0); i++)
+            {
+                for (int j = 0; j < inputArray.GetLength(1); j++)
+                {
+                    File.AppendAllText(filePath, inputArray[i, j] + " ");
+                }
+                File.AppendAllText(filePath, Environment.NewLine);
+            }
+        }
     }
 }
